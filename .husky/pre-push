@@ -1,0 +1,8 @@
+#!/bin/sh
+
+# Stop immediately on error
+set -e
+
+# Infra repos have no JS/TS: prettier is the only check (no eslint/tsc/jest).
+# Use this variant ONLY for infra repos whose lint is prettier-only.
+npx prettier --check .
