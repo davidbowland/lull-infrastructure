@@ -111,3 +111,16 @@ Deliberately tighter than `connections-infrastructure`, which this template was 
   and the staging user is the one used in every environment. There is no credential-level separation
   between test and prod here, by choice — the separation lives on the roles instead.
 - `cloudformation:*` is scoped to `lull-*` stacks rather than granted on `Resource: '*'`.
+- **`CloudFormationRole` cannot mint privilege for itself.** The whole `iam:*` namespace is
+  excluded and granted back narrowly: role creation only under a permissions boundary,
+  `AttachRolePolicy` only for `AWSLambdaBasicExecutionRole`, everything scoped to `role/lull-*`.
+
+  Two things this closes that a name-scope alone does not. Scoping `CreateRole` to `role/lull-*`
+  constrains the role's _name_, not its trust policy or what may be attached to it — so
+  `RoleName: lull-anything` with `AdministratorAccess` was reachable. And `iam:*User` matches only
+  actions whose name _ends_ in `User`, so `iam:PutUserPolicy`, `iam:AttachUserPolicy` and
+  `iam:CreateAccessKey` were never excluded — an `AWS::IAM::Policy` naming the pipeline user made
+  that user an account administrator.
+
+  If a future stack needs a managed policy these grants do not cover, widen the
+  `ArnEquals` condition deliberately rather than removing it.

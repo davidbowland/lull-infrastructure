@@ -60,6 +60,27 @@ Resources:
 
   # Deployment roles
 
+  # The ceiling on anything CloudFormationRole creates. Referenced by the
+  # iam:PermissionsBoundary condition below: a role created by a Lull stack cannot exceed
+  # this however its own policies are written, which is what turns a name-scope into a
+  # privilege-scope.
+  LullBoundary:
+    Type: AWS::IAM::ManagedPolicy
+    Properties:
+      Description: Ceiling for roles created by Lull stacks
+      ManagedPolicyName: !Sub
+        - '${Project}-boundary'
+        - Project: !FindInMap [EnvironmentMap, !Ref Environment, project]
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            NotAction:
+              - 'account:*'
+              - 'iam:*'
+              - 'organizations:*'
+            Resource: '*'
+
   CloudFormationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -78,35 +99,65 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # Everything except the actions that would let a stack mint privilege for itself.
+              # Everything except IAM, which is granted back narrowly below.
               #
-              # The pipeline role's cloudformation:* is scoped to stack/lull-*, and it would be easy
-              # to read that as the containment. It is not: it constrains WHICH STACKS may be
-              # touched, not WHAT THOSE STACKS MAY CREATE. Without the IAM exclusions below, anyone
-              # holding a pipeline credential could create a stack named lull-anything, pass this
-              # role, and have that stack provision a role with AdministratorAccess -- reaching
-              # every unrelated product in this account (emails-*, bridge-*, choosee-*,
-              # connections-*, food-*, jokes-*...).
+              # The pipeline role's cloudformation:* is scoped to stack/lull-*, and it is tempting to
+              # read that as the containment. It is not: it constrains WHICH STACKS may be touched,
+              # never WHAT THOSE STACKS MAY CREATE. Without the exclusions here, a pipeline
+              # credential creates a stack named lull-anything, passes this role, and has the stack
+              # provision privilege for itself -- reaching every unrelated product in this account.
+              #
+              # `iam:*User` alone was not enough, twice over. It matches only actions whose name
+              # ENDS in User, so iam:PutUserPolicy, iam:AttachUserPolicy, iam:CreateAccessKey,
+              # iam:CreateLoginProfile and iam:UpdateAssumeRolePolicy all sailed through -- an
+              # AWS::IAM::Policy resource naming the pipeline user made that user an account admin.
+              # And scoping CreateRole/AttachRolePolicy to role/lull-* constrained the role's NAME
+              # while leaving its trust policy and attached policies unconstrained, so
+              # `RoleName: lull-pwn` with AdministratorAccess was still reachable.
               - Effect: Allow
                 NotAction:
                   - 'account:*'
-                  - 'iam:*User'
-                  - 'iam:AttachGroupPolicy'
-                  - 'iam:AttachRolePolicy'
-                  - 'iam:CreatePolicy'
-                  - 'iam:CreatePolicyVersion'
-                  - 'iam:CreateRole'
-                  - 'iam:PutRolePolicy'
+                  - 'iam:*'
                   - 'organizations:*'
                 Resource: '*'
-              # The role actions a SAM deploy genuinely needs, scoped to Lull's own roles.
-              # CloudFormation generates execution-role names from the stack name, so every role
-              # this creates is lull-api-* or lull-ui-*.
+              # The role actions a SAM deploy genuinely needs. CloudFormation derives execution-role
+              # names from the stack name, so every role these stacks create is lull-*.
+              #
+              # The PermissionsBoundary condition is what makes the name scope mean something: a
+              # role created here cannot exceed the boundary however its policies are written.
               - Effect: Allow
                 Action:
-                  - 'iam:AttachRolePolicy'
                   - 'iam:CreateRole'
+                  - 'iam:TagRole'
+                  - 'iam:UntagRole'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-*'
+                Condition:
+                  StringEquals:
+                    'iam:PermissionsBoundary': !Ref LullBoundary
+              # Only the managed policy the Lambdas actually use. Without this condition,
+              # AttachRolePolicy on a lull-* role could attach AdministratorAccess.
+              - Effect: Allow
+                Action: 'iam:AttachRolePolicy'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-*'
+                Condition:
+                  ArnEquals:
+                    'iam:PolicyARN': 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
+              # Inline policies on lull-* roles: SAM writes the per-function DynamoDB and log
+              # grants this way. Still bounded by the permissions boundary above.
+              - Effect: Allow
+                Action:
+                  - 'iam:DeleteRole'
+                  - 'iam:DeleteRolePolicy'
+                  - 'iam:DetachRolePolicy'
+                  - 'iam:GetRole'
+                  - 'iam:GetRolePolicy'
+                  - 'iam:ListRolePolicies'
+                  - 'iam:ListAttachedRolePolicies'
                   - 'iam:PutRolePolicy'
+                  - 'iam:UpdateAssumeRolePolicy'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-*'
+              - Effect: Allow
+                Action: 'iam:PassRole'
                 Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-*'
       RoleName: !FindInMap [EnvironmentMap, !Ref Environment, roleNameCloudFormation]
       Tags:
