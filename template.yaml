@@ -30,13 +30,6 @@ Mappings:
       userNameApi: lull-api-user-test
       userNameUi: lull-ui-user-test
 
-Conditions:
-  # The prod pipeline users genuinely need both roles: the sibling workflows
-  # authenticate once and assume the testing role and then the production role
-  # within a single run. The test users need only the test role, and granting
-  # them prod is how a leaked test credential reaches production.
-  IsProd: !Equals [!Ref Environment, 'prod']
-
 Resources:
   # Deployment storage
 
@@ -191,16 +184,24 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # See the IsProd condition: prod users need both roles because a
-              # single workflow run assumes testing and then production. Test
-              # users get only the test role.
+              # BOTH roles, for BOTH environments' users, deliberately.
+              #
+              # A single AWS_ACCESS_KEY_ID secret drives the whole pipeline, and
+              # one workflow run assumes the testing role and then the production
+              # role (see connections-api/.github/workflows/pipeline.yaml -- five
+              # assume-role steps, one credential). In practice the staging user
+              # is the one used in every environment.
+              #
+              # So there is no credential-level separation between test and prod
+              # here, by choice. Restricting the test user to the test role looks
+              # obviously correct and breaks production deploys outright. The
+              # boundary that does hold is on the ROLES: lull-pipeline-test has no
+              # grant on the production UI bucket, whoever assumes it.
               - Effect: Allow
                 Action: 'sts:AssumeRole'
-                Resource: !If
-                  - IsProd
-                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
-                    - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
-                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
       Tags:
         - Key: 'created-by'
           Value: 'lull-infrastructure'
@@ -220,16 +221,24 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              # See the IsProd condition: prod users need both roles because a
-              # single workflow run assumes testing and then production. Test
-              # users get only the test role.
+              # BOTH roles, for BOTH environments' users, deliberately.
+              #
+              # A single AWS_ACCESS_KEY_ID secret drives the whole pipeline, and
+              # one workflow run assumes the testing role and then the production
+              # role (see connections-api/.github/workflows/pipeline.yaml -- five
+              # assume-role steps, one credential). In practice the staging user
+              # is the one used in every environment.
+              #
+              # So there is no credential-level separation between test and prod
+              # here, by choice. Restricting the test user to the test role looks
+              # obviously correct and breaks production deploys outright. The
+              # boundary that does hold is on the ROLES: lull-pipeline-test has no
+              # grant on the production UI bucket, whoever assumes it.
               - Effect: Allow
                 Action: 'sts:AssumeRole'
-                Resource: !If
-                  - IsProd
-                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
-                    - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
-                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
       Tags:
         - Key: 'created-by'
           Value: 'lull-infrastructure'

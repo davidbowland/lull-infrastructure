@@ -106,6 +106,8 @@ Deliberately tighter than `connections-infrastructure`, which this template was 
 
 - The **test** pipeline role has no access to the **production** UI bucket. In the source both
   buckets are listed unconditionally, and `copyToS3.sh` ends in `aws s3 sync . --delete`.
-- The **test** pipeline users cannot assume the **production** pipeline role. The prod users can
-  assume both, because a single workflow run legitimately deploys to testing and then production.
+- Both pipeline users can assume both roles, unchanged from the source and **deliberate**: a single
+  `AWS_ACCESS_KEY_ID` secret drives the whole pipeline, one run assumes testing and then production,
+  and the staging user is the one used in every environment. There is no credential-level separation
+  between test and prod here, by choice — the separation lives on the roles instead.
 - `cloudformation:*` is scoped to `lull-*` stacks rather than granted on `Resource: '*'`.
