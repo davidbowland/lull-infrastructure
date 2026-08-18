@@ -78,12 +78,36 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # Everything except the actions that would let a stack mint privilege for itself.
+              #
+              # The pipeline role's cloudformation:* is scoped to stack/lull-*, and it would be easy
+              # to read that as the containment. It is not: it constrains WHICH STACKS may be
+              # touched, not WHAT THOSE STACKS MAY CREATE. Without the IAM exclusions below, anyone
+              # holding a pipeline credential could create a stack named lull-anything, pass this
+              # role, and have that stack provision a role with AdministratorAccess -- reaching
+              # every unrelated product in this account (emails-*, bridge-*, choosee-*,
+              # connections-*, food-*, jokes-*...).
               - Effect: Allow
                 NotAction:
-                  - 'iam:*User'
-                  - 'organizations:*'
                   - 'account:*'
+                  - 'iam:*User'
+                  - 'iam:AttachGroupPolicy'
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:CreatePolicy'
+                  - 'iam:CreatePolicyVersion'
+                  - 'iam:CreateRole'
+                  - 'iam:PutRolePolicy'
+                  - 'organizations:*'
                 Resource: '*'
+              # The role actions a SAM deploy genuinely needs, scoped to Lull's own roles.
+              # CloudFormation generates execution-role names from the stack name, so every role
+              # this creates is lull-api-* or lull-ui-*.
+              - Effect: Allow
+                Action:
+                  - 'iam:AttachRolePolicy'
+                  - 'iam:CreateRole'
+                  - 'iam:PutRolePolicy'
+                Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-*'
       RoleName: !FindInMap [EnvironmentMap, !Ref Environment, roleNameCloudFormation]
       Tags:
         - Key: 'created-by'
