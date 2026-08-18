@@ -18,6 +18,7 @@ Mappings:
       project: lull
       roleNameCloudFormation: lull-cloudformation
       roleNamePipeline: lull-pipeline
+      uiBucketName: lull-ui
       userNameApi: lull-api-user
       userNameUi: lull-ui-user
     test:
@@ -25,8 +26,16 @@ Mappings:
       project: lull-test
       roleNameCloudFormation: lull-cloudformation-test
       roleNamePipeline: lull-pipeline-test
+      uiBucketName: lull-ui-test
       userNameApi: lull-api-user-test
       userNameUi: lull-ui-user-test
+
+Conditions:
+  # The prod pipeline users genuinely need both roles: the sibling workflows
+  # authenticate once and assume the testing role and then the production role
+  # within a single run. The test users need only the test role, and granting
+  # them prod is how a leaked test credential reaches production.
+  IsProd: !Equals [!Ref Environment, 'prod']
 
 Resources:
   # Deployment storage
@@ -111,13 +120,40 @@ Resources:
               - Effect: Allow
                 Action: 'iam:PassRole'
                 Resource: !Sub '${CloudFormationRole.Arn}'
+              # Scoped to Lull's own stacks. connections-infrastructure grants
+              # cloudformation:* on Resource '*', which lets any pipeline role
+              # delete any stack in the account, including every unrelated
+              # project. The Serverless transform ARN is required for SAM
+              # templates -- without it CreateChangeSet fails.
+              #
+              # If a deploy ever hits an AccessDenied on a cloudformation:*
+              # action, this is the first statement to look at.
               - Effect: Allow
                 Action: 'cloudformation:*'
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/lull-*'
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:stack/lull-*/*'
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:${AWS::AccountId}:changeSet/*/*'
+                  - !Sub 'arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+              # Account-level calls that accept no resource. All read-only --
+              # IAM requires '*' for these and they cannot mutate a stack.
+              - Effect: Allow
+                Action:
+                  - 'cloudformation:DescribeAccountLimits'
+                  - 'cloudformation:GetTemplateSummary'
+                  - 'cloudformation:ListExports'
+                  - 'cloudformation:ListImports'
+                  - 'cloudformation:ListStacks'
+                  - 'cloudformation:ValidateTemplate'
                 Resource: '*'
-              # Cross-repo coupling: these bucket names must match the buckets
-              # lull-ui's own template creates. IAM accepts a nonexistent ARN
-              # silently, so a mismatch surfaces only as AccessDenied at UI
-              # deploy time.
+              # Cross-repo coupling: uiBucketName must match the bucket lull-ui's
+              # own template creates. IAM accepts a nonexistent ARN silently, so a
+              # mismatch surfaces only as AccessDenied at UI deploy time.
+              #
+              # Scoped to THIS environment's bucket. Listing both would give the
+              # test pipeline DeleteObject on the production site -- and
+              # copyToS3.sh ends in `aws s3 sync . --delete`, so one wrong
+              # argument under test credentials would empty it.
               - Effect: Allow
                 Action:
                   - 's3:DeleteObject'
@@ -126,10 +162,12 @@ Resources:
                   - 's3:GetBucket*'
                   - 's3:List*'
                 Resource:
-                  - 'arn:aws:s3:::lull-ui/*'
-                  - 'arn:aws:s3:::lull-ui'
-                  - 'arn:aws:s3:::lull-ui-test/*'
-                  - 'arn:aws:s3:::lull-ui-test'
+                  - !Sub
+                    - 'arn:aws:s3:::${UiBucket}'
+                    - UiBucket: !FindInMap [EnvironmentMap, !Ref Environment, uiBucketName]
+                  - !Sub
+                    - 'arn:aws:s3:::${UiBucket}/*'
+                    - UiBucket: !FindInMap [EnvironmentMap, !Ref Environment, uiBucketName]
                   - !Sub 'arn:aws:s3:::${LambdaBucket}/*'
                   - !Sub 'arn:aws:s3:::${LambdaBucket}'
       RoleName: !FindInMap [EnvironmentMap, !Ref Environment, roleNamePipeline]
@@ -153,11 +191,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # See the IsProd condition: prod users need both roles because a
+              # single workflow run assumes testing and then production. Test
+              # users get only the test role.
               - Effect: Allow
                 Action: 'sts:AssumeRole'
-                Resource:
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
+                Resource: !If
+                  - IsProd
+                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
+                    - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
+                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
       Tags:
         - Key: 'created-by'
           Value: 'lull-infrastructure'
@@ -177,11 +220,16 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
+              # See the IsProd condition: prod users need both roles because a
+              # single workflow run assumes testing and then production. Test
+              # users get only the test role.
               - Effect: Allow
                 Action: 'sts:AssumeRole'
-                Resource:
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
-                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
+                Resource: !If
+                  - IsProd
+                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline'
+                    - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
+                  - - !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-pipeline-test'
       Tags:
         - Key: 'created-by'
           Value: 'lull-infrastructure'
