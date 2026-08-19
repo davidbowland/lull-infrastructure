@@ -1,0 +1,165 @@
+name: Pipeline
+
+# Credentials belong to root-lull-infra, a user created by root-infrastructure -- not by this stack.
+# That is what makes a pipeline possible here at all: deploying this template can rename or delete
+# the lull-* users, but never the user whose access key this workflow is holding.
+
+env:
+  HUSKY: 0
+  PROD_PIPELINE_EXECUTION_ROLE: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/full-access
+  PROD_STACK_NAME: lull-infrastructure
+  TEMPLATE_NAME: template.yaml
+  TESTING_PIPELINE_EXECUTION_ROLE: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/full-access
+  TESTING_STACK_NAME: lull-infrastructure-test
+
+on: push
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/master' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-deploy-feature:
+    name: Deploy feature branch
+    if: github.ref != 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v7
+      - name: Install Python 3
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install AWS SAM
+        uses: aws-actions/setup-sam@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ env.TESTING_PIPELINE_EXECUTION_ROLE }}
+          role-session-name: feature-deployment
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true
+
+      - name: Deploy test infrastructure
+        shell: bash
+        run: |
+          sam deploy --stack-name ${{ env.TESTING_STACK_NAME }} \
+            --template-file ${{ env.TEMPLATE_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides 'Environment=test'
+
+  deploy-testing:
+    name: Deploy to test environment
+    if: github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v7
+      - name: Install Python 3
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install AWS SAM
+        uses: aws-actions/setup-sam@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ env.TESTING_PIPELINE_EXECUTION_ROLE }}
+          role-session-name: testing-deployment
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true
+
+      - name: Deploy test infrastructure
+        shell: bash
+        run: |
+          sam deploy --stack-name ${{ env.TESTING_STACK_NAME }} \
+            --template-file ${{ env.TEMPLATE_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --parameter-overrides 'Environment=test'
+
+  create-production-changeset:
+    name: Create the production changeset
+    if: github.ref == 'refs/heads/master'
+    needs: [deploy-testing]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v7
+      - name: Install Python 3
+        uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Install AWS SAM
+        uses: aws-actions/setup-sam@v3
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-to-assume: ${{ env.PROD_PIPELINE_EXECUTION_ROLE }}
+          role-session-name: prod-deployment
+          role-duration-seconds: 3600
+          role-skip-session-tagging: true
+
+      # --no-execute-changeset, unlike every sibling repo, which deploys production outright.
+      # This stack's production resources are the named IAM users and roles that lull-api and
+      # lull-ui authenticate as. A rename is a delete plus a create, and the delete takes those
+      # pipelines' credentials with it -- so production is printed here and applied by a human.
+      - name: Create production changeset
+        shell: bash
+        run: |
+          sam deploy --stack-name ${{ env.PROD_STACK_NAME }} \
+            --template-file ${{ env.TEMPLATE_NAME }} \
+            --region ${{ secrets.AWS_REGION }} \
+            --no-fail-on-empty-changeset \
+            --no-execute-changeset \
+            --capabilities CAPABILITY_NAMED_IAM
+
+      - name: Explain how to apply it
+        shell: bash
+        run: |
+          echo "Read the changeset above, then execute it:"
+          echo "  aws cloudformation execute-change-set --region ${{ secrets.AWS_REGION }} \\"
+          echo "    --stack-name ${{ env.PROD_STACK_NAME }} --change-set-name <name printed above>"
+
+  bump:
+    name: Bump the version number and tag the commit
+    needs: [create-production-changeset]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout latest code
+        uses: actions/checkout@v7
+      - name: Install Node 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24.x
+
+      - name: Set git name and email
+        env:
+          GIT_EMAIL: ${{ secrets.GIT_EMAIL || 'github-actions[bot]@users.noreply.github.com' }}
+        run: |
+          git config --local user.email "${GIT_EMAIL}"
+          git config --local user.name "github-actions[bot]"
+      - name: Bump the minor version
+        run: npm version minor
+      - name: Push tag created by version bump
+        run: git push --follow-tags
