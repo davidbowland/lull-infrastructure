@@ -92,8 +92,8 @@ jobs:
             --capabilities CAPABILITY_NAMED_IAM \
             --parameter-overrides 'Environment=test'
 
-  create-production-changeset:
-    name: Create the production changeset
+  deploy-production:
+    name: Deploy to production
     if: github.ref == 'refs/heads/master'
     needs: [deploy-testing]
     runs-on: ubuntu-latest
@@ -118,30 +118,22 @@ jobs:
           role-duration-seconds: 3600
           role-skip-session-tagging: true
 
-      # --no-execute-changeset, unlike every sibling repo, which deploys production outright.
-      # This stack's production resources are the named IAM users and roles that lull-api and
-      # lull-ui authenticate as. A rename is a delete plus a create, and the delete takes those
-      # pipelines' credentials with it -- so production is printed here and applied by a human.
-      - name: Create production changeset
+      # Environment defaults to prod in template.yaml, so no --parameter-overrides here.
+      # Read the changeset before merging to master, not after: this stack's production
+      # resources are the named IAM users lull-api and lull-ui authenticate as, and a rename
+      # is a delete plus a create. `sam deploy --no-execute-changeset` locally prints it.
+      - name: Deploy production infrastructure
         shell: bash
         run: |
           sam deploy --stack-name ${{ env.PROD_STACK_NAME }} \
             --template-file ${{ env.TEMPLATE_NAME }} \
             --region ${{ secrets.AWS_REGION }} \
             --no-fail-on-empty-changeset \
-            --no-execute-changeset \
             --capabilities CAPABILITY_NAMED_IAM
-
-      - name: Explain how to apply it
-        shell: bash
-        run: |
-          echo "Read the changeset above, then execute it:"
-          echo "  aws cloudformation execute-change-set --region ${{ secrets.AWS_REGION }} \\"
-          echo "    --stack-name ${{ env.PROD_STACK_NAME }} --change-set-name <name printed above>"
 
   bump:
     name: Bump the version number and tag the commit
-    needs: [create-production-changeset]
+    needs: [deploy-production]
     runs-on: ubuntu-latest
     permissions:
       contents: write

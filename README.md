@@ -2,7 +2,7 @@
 
 Infrastructure as Code for the Lull project: the Lambda artifacts bucket, the CloudFormation and pipeline deployment roles, and the IAM users that `lull-api` and `lull-ui` authenticate as.
 
-**Test deploys by CI, production by hand.** `.github/workflows/pipeline.yaml` deploys the test stack on every push, then prints the production changeset without executing it.
+**Deployed by `.github/workflows/pipeline.yaml`,** like every other infrastructure repo: feature branches to test, `master` to test and then production.
 
 ## Setup
 
@@ -35,19 +35,19 @@ sam deploy --stack-name lull-infrastructure --template-file template.yaml --regi
 
 `.github/workflows/pipeline.yaml` runs on every push:
 
-| Branch   | What happens                                                                                       |
-| -------- | -------------------------------------------------------------------------------------------------- |
-| feature  | Deploys `lull-infrastructure-test`                                                                 |
-| `master` | Deploys `lull-infrastructure-test`, then creates — but does not execute — the production changeset |
+| Branch   | What happens                                                              |
+| -------- | ------------------------------------------------------------------------- |
+| feature  | Deploys `lull-infrastructure-test`                                        |
+| `master` | Deploys `lull-infrastructure-test`, then `lull-infrastructure`, then tags |
 
 The pipeline authenticates as `root-lull-infra` and assumes `full-access`. Both are created by
 `root-infrastructure`, not by this stack, which is what makes a pipeline safe here: this template can
 delete the `lull-*` users, but never the user the pipeline is authenticating as.
 
-Production is the exception. The changeset is printed to the job log and applied by hand:
+Because `master` reaches production unattended, read the changeset **before** merging, not after:
 
 ```bash
-aws cloudformation execute-change-set --region us-east-1 --stack-name lull-infrastructure --change-set-name <name from the job log>
+sam deploy --stack-name lull-infrastructure --template-file template.yaml --region us-east-1 --capabilities CAPABILITY_NAMED_IAM --no-fail-on-empty-changeset --no-execute-changeset
 ```
 
 Required GitHub secrets: `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_REGION`, `AWS_ACCOUNT_ID`.
