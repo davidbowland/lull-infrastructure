@@ -60,27 +60,6 @@ Resources:
 
   # Deployment roles
 
-  # The ceiling on anything CloudFormationRole creates. Referenced by the
-  # iam:PermissionsBoundary condition below: a role created by a Lull stack cannot exceed
-  # this however its own policies are written, which is what turns a name-scope into a
-  # privilege-scope.
-  LullBoundary:
-    Type: AWS::IAM::ManagedPolicy
-    Properties:
-      Description: Ceiling for roles created by Lull stacks
-      ManagedPolicyName: !Sub
-        - '${Project}-boundary'
-        - Project: !FindInMap [EnvironmentMap, !Ref Environment, project]
-      PolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            NotAction:
-              - 'account:*'
-              - 'iam:*'
-              - 'organizations:*'
-            Resource: '*'
-
   CloudFormationRole:
     Type: AWS::IAM::Role
     Properties:
@@ -122,18 +101,12 @@ Resources:
                 Resource: '*'
               # The role actions a SAM deploy genuinely needs. CloudFormation derives execution-role
               # names from the stack name, so every role these stacks create is lull-*.
-              #
-              # The PermissionsBoundary condition is what makes the name scope mean something: a
-              # role created here cannot exceed the boundary however its policies are written.
               - Effect: Allow
                 Action:
                   - 'iam:CreateRole'
                   - 'iam:TagRole'
                   - 'iam:UntagRole'
                 Resource: !Sub 'arn:aws:iam::${AWS::AccountId}:role/lull-*'
-                Condition:
-                  StringEquals:
-                    'iam:PermissionsBoundary': !Ref LullBoundary
               # Only the managed policy the Lambdas actually use. Without this condition,
               # AttachRolePolicy on a lull-* role could attach AdministratorAccess.
               - Effect: Allow
@@ -143,7 +116,7 @@ Resources:
                   ArnEquals:
                     'iam:PolicyARN': 'arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole'
               # Inline policies on lull-* roles: SAM writes the per-function DynamoDB and log
-              # grants this way. Still bounded by the permissions boundary above.
+              # grants this way.
               - Effect: Allow
                 Action:
                   - 'iam:DeleteRole'
