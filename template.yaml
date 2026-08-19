@@ -117,10 +117,6 @@ Resources:
                 Action:
                   - 'iam:DeleteRole'
                   - 'iam:DeleteRolePolicy'
-                  # Needed to strip the permissions boundary this stack used to require. Roles
-                  # lull-api created while that condition was in force still carry it, and
-                  # CloudFormation calls this to take it off.
-                  - 'iam:DeleteRolePermissionsBoundary'
                   - 'iam:DetachRolePolicy'
                   - 'iam:GetRole'
                   - 'iam:GetRolePolicy'
