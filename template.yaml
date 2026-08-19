@@ -212,6 +212,35 @@ Resources:
                     - UiBucket: !FindInMap [EnvironmentMap, test, uiBucketName]
                   - !Sub 'arn:aws:s3:::${LambdaBucket}/*'
                   - !Sub 'arn:aws:s3:::${LambdaBucket}'
+              # For scripts/deploy-prompts.ts in lull-api, which runs as this role AFTER the stack
+              # deploy and pushes prompts/ into the prompts table. Prompt text is data, not code, so
+              # tuning a prompt is not a code change -- which only works if the pipeline can write.
+              #
+              # Exactly the two actions that script calls: Query in getExistingPrompt, PutItem in
+              # deployPrompt. connections-infrastructure grants six here -- adding DeleteItem, Scan,
+              # GetItem and DescribeTable -- and this deliberately does not follow it, for the same
+              # reason the cloudformation block above is scoped to lull-* stacks.
+              #
+              # DeleteItem is the one worth naming: prompts are keyed PromptId + UpdatedAt so every
+              # revision is retained, and that history is the only record of what a model was
+              # actually asked on a given night. A pipeline that can delete rows can erase it.
+              #
+              # Query is NOT optional despite the script surviving without it. getExistingPrompt
+              # swallows its own failure and returns null, so an unauthorized Query silently turns
+              # the skip-unchanged check into "always write" -- a new revision every pipeline run,
+              # forever, whether or not the prompt changed.
+              #
+              # BOTH environments' tables in BOTH roles, matching the S3 block above and every
+              # sibling infra repo. The literal prod/test names are deliberate and do not follow
+              # !Ref Environment. IAM accepts a nonexistent ARN silently, so a name that drifts from
+              # lull-api's template.yaml surfaces only as AccessDenied at prompt-deploy time.
+              - Effect: Allow
+                Action:
+                  - 'dynamodb:PutItem'
+                  - 'dynamodb:Query'
+                Resource:
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/lull-api-prompts'
+                  - !Sub 'arn:aws:dynamodb:${AWS::Region}:${AWS::AccountId}:table/lull-api-prompts-test'
       RoleName: !FindInMap [EnvironmentMap, !Ref Environment, roleNamePipeline]
       Tags:
         - Key: 'created-by'
