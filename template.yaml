@@ -19,16 +19,12 @@ Mappings:
       roleNameCloudFormation: lull-cloudformation
       roleNamePipeline: lull-pipeline
       uiBucketName: lull-ui
-      userNameApi: lull-api-user
-      userNameUi: lull-ui-user
     test:
       lambdaBucketName: lull-lambda-test
       project: lull-test
       roleNameCloudFormation: lull-cloudformation-test
       roleNamePipeline: lull-pipeline-test
       uiBucketName: lull-ui-test
-      userNameApi: lull-api-user-test
-      userNameUi: lull-ui-user-test
 
 Resources:
   # Deployment storage
@@ -195,10 +191,9 @@ Resources:
               # own template creates. IAM accepts a nonexistent ARN silently, so a
               # mismatch surfaces only as AccessDenied at UI deploy time.
               #
-              # Scoped to THIS environment's bucket. Listing both would give the
-              # test pipeline DeleteObject on the production site -- and
-              # copyToS3.sh ends in `aws s3 sync . --delete`, so one wrong
-              # argument under test credentials would empty it.
+              # BOTH environments' buckets in BOTH roles, matching every sibling
+              # infra repo. The literal prod/test keys below are deliberate -- these
+              # do not follow !Ref Environment.
               - Effect: Allow
                 Action:
                   - 's3:DeleteObject'
@@ -209,10 +204,16 @@ Resources:
                 Resource:
                   - !Sub
                     - 'arn:aws:s3:::${UiBucket}'
-                    - UiBucket: !FindInMap [EnvironmentMap, !Ref Environment, uiBucketName]
+                    - UiBucket: !FindInMap [EnvironmentMap, prod, uiBucketName]
                   - !Sub
                     - 'arn:aws:s3:::${UiBucket}/*'
-                    - UiBucket: !FindInMap [EnvironmentMap, !Ref Environment, uiBucketName]
+                    - UiBucket: !FindInMap [EnvironmentMap, prod, uiBucketName]
+                  - !Sub
+                    - 'arn:aws:s3:::${UiBucket}'
+                    - UiBucket: !FindInMap [EnvironmentMap, test, uiBucketName]
+                  - !Sub
+                    - 'arn:aws:s3:::${UiBucket}/*'
+                    - UiBucket: !FindInMap [EnvironmentMap, test, uiBucketName]
                   - !Sub 'arn:aws:s3:::${LambdaBucket}/*'
                   - !Sub 'arn:aws:s3:::${LambdaBucket}'
       RoleName: !FindInMap [EnvironmentMap, !Ref Environment, roleNamePipeline]
@@ -246,9 +247,7 @@ Resources:
               #
               # So there is no credential-level separation between test and prod
               # here, by choice. Restricting the test user to the test role looks
-              # obviously correct and breaks production deploys outright. The
-              # boundary that does hold is on the ROLES: lull-pipeline-test has no
-              # grant on the production UI bucket, whoever assumes it.
+              # obviously correct and breaks production deploys outright.
               - Effect: Allow
                 Action: 'sts:AssumeRole'
                 Resource:
@@ -261,7 +260,6 @@ Resources:
           Value: 'lull'
         - Key: 'environment'
           Value: !Ref Environment
-      UserName: !FindInMap [EnvironmentMap, !Ref Environment, userNameApi]
 
   UiUser:
     Type: AWS::IAM::User
@@ -283,9 +281,7 @@ Resources:
               #
               # So there is no credential-level separation between test and prod
               # here, by choice. Restricting the test user to the test role looks
-              # obviously correct and breaks production deploys outright. The
-              # boundary that does hold is on the ROLES: lull-pipeline-test has no
-              # grant on the production UI bucket, whoever assumes it.
+              # obviously correct and breaks production deploys outright.
               - Effect: Allow
                 Action: 'sts:AssumeRole'
                 Resource:
@@ -298,7 +294,6 @@ Resources:
           Value: 'lull'
         - Key: 'environment'
           Value: !Ref Environment
-      UserName: !FindInMap [EnvironmentMap, !Ref Environment, userNameUi]
 
 Outputs:
   LambdaBucketName:
@@ -310,6 +305,8 @@ Outputs:
   PipelineRoleArn:
     Description: ARN of the role the lull-api and lull-ui pipelines assume to deploy
     Value: !GetAtt PipelineRole.Arn
+  # CloudFormation generates these names. This is how you find out what they are
+  # when you go to mint an access key.
   ApiUserName:
     Description: IAM user the lull-api pipeline authenticates as
     Value: !Ref LullApiUser

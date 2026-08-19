@@ -19,8 +19,10 @@ itself authenticates as.
 **Never merge to `master` without reading the production changeset first.** `sam deploy
 --no-execute-changeset` prints what will happen. The pipeline does not gate this — `master` reaches
 production unattended, like every sibling repo — so the reading happens before the merge, not after.
-This stack creates named IAM users and roles; a rename is a delete plus a create, and the delete
-takes the credentials the other pipelines are using with it.
+This stack creates named IAM roles; a rename is a delete plus a create, and the delete takes the
+credentials the other pipelines are using with it. The pipeline users are CloudFormation-named on
+purpose, so editing them does not force a replacement — but any change that _does_ replace a user
+still destroys its access keys.
 
 **Prod and test differ only by the `Environment` parameter.** Every name comes from the
 `EnvironmentMap` mapping. Never hardcode a name in a resource — if you find yourself typing `lull-`

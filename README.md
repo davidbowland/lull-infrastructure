@@ -113,9 +113,14 @@ Everything lives in `us-east-1`. This is not a preference: a Lambda deployment p
 The stack creates the pipeline **users** but not their access keys — CloudFormation can create an
 `AWS::IAM::AccessKey`, but that writes the secret into stack outputs, so it is done by hand instead.
 
-After deploying, for each of `lull-api-user` and `lull-ui-user`:
+CloudFormation names the users, so read the names out of the stack outputs first:
 
-    aws iam create-access-key --user-name lull-api-user
+    aws cloudformation describe-stacks --stack-name lull-infrastructure \
+      --query 'Stacks[0].Outputs[?OutputKey==`ApiUserName`||OutputKey==`UiUserName`]'
+
+Then, for each:
+
+    aws iam create-access-key --user-name <name from the output above>
 
 Load the pair into the corresponding repo's GitHub secrets as `AWS_ACCESS_KEY_ID` and
 `AWS_SECRET_ACCESS_KEY`. Each pipeline also needs `AWS_ACCOUNT_ID`, `AWS_REGION`, and `GIT_EMAIL`.
@@ -126,12 +131,11 @@ Until this is done, `lull-api` and `lull-ui` cannot deploy even though this stac
 
 Deliberately tighter than `connections-infrastructure`, which this template was derived from:
 
-- The **test** pipeline role has no access to the **production** UI bucket. In the source both
-  buckets are listed unconditionally, and `copyToS3.sh` ends in `aws s3 sync . --delete`.
 - Both pipeline users can assume both roles, unchanged from the source and **deliberate**: a single
   `AWS_ACCESS_KEY_ID` secret drives the whole pipeline, one run assumes testing and then production,
   and the staging user is the one used in every environment. There is no credential-level separation
-  between test and prod here, by choice — the separation lives on the roles instead.
+  between test and prod here, by choice. Both pipeline roles likewise reach both environments' UI
+  buckets, matching every sibling infra repo.
 - `cloudformation:*` is scoped to `lull-*` stacks rather than granted on `Resource: '*'`.
 - **`CloudFormationRole` cannot mint privilege for itself.** The whole `iam:*` namespace is
   excluded and granted back narrowly: role actions scoped to `role/lull-*`, and `AttachRolePolicy`
